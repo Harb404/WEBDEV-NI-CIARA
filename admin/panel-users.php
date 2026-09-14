@@ -1,5 +1,5 @@
 <div class="dash-panel">
-  <h3>All Users</h3>
+  <h3>Aspirants</h3>
   <?php if (!$allUsers): ?>
     <p class="dash-empty">No users yet.</p>
   <?php else: ?>

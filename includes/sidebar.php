@@ -5,7 +5,7 @@
   </div>
   <nav class="dash-nav">
     <a href="admin.php?panel=overview" class="<?php echo $activePanel === 'overview' ? 'is-active' : ''; ?>">Overview</a>
-    <a href="admin.php?panel=postings" class="<?php echo $activePanel === 'postings' ? 'is-active' : ''; ?>">Postings<?php if ($statPendingPostingCount > 0): ?> <span class="dash-nav-badge"><?php echo (int) $statPendingPostingCount; ?></span><?php endif; ?></a>
+    <a href="admin.php?panel=postings" class="<?php echo $activePanel === 'postings' ? 'is-active' : ''; ?>">Postings</a>
     <a href="admin.php?panel=applications" class="<?php echo $activePanel === 'applications' ? 'is-active' : ''; ?>">Applications</a>
     <a href="admin.php?panel=users" class="<?php echo $activePanel === 'users' ? 'is-active' : ''; ?>">Users</a>
     <a href="admin.php?panel=organizations" class="<?php echo $activePanel === 'organizations' ? 'is-active' : ''; ?>">Organizations</a>
