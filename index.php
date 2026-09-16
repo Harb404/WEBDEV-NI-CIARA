@@ -378,7 +378,7 @@ if ($searchTerm !== '') {
             <div class="category-card" style="--i:0">
 
                 <img
-                    src="Pictures/category-individual.jpg"
+                    src="Pictures/tig-fix.jpg"
                     alt="Individual Aspirants"
                 >
 

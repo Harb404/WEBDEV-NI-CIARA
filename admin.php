@@ -8,7 +8,7 @@ $database = getDatabase();
 $message = $_SESSION['admin_flash_message'] ?? '';
 unset($_SESSION['admin_flash_message']);
 
-$validPanels = ['overview', 'postings', 'applications', 'users', 'organizations', 'categories', 'reports', 'activity', 'messages'];
+$validPanels = ['overview', 'postings', 'applications', 'users', 'organizations', 'categories', 'reports', 'activity', 'messages', 'groups'];
 $activePanel = $_GET['panel'] ?? 'overview';
 if (!in_array($activePanel, $validPanels, true)) {
   $activePanel = 'overview';
@@ -150,9 +150,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       logActivity($database, 'Deleted category', $categoryName !== false ? $categoryName : $categoryId);
       $_SESSION['admin_flash_message'] = 'Category deleted.';
     }
+  } elseif ($action === 'create_group') {
+    $groupName = trim($_POST['name'] ?? '');
+    $memberIds = array_filter(array_map('intval', $_POST['member_ids'] ?? []));
+    if ($groupName === '') {
+      $_SESSION['admin_flash_message'] = 'Please enter a group name.';
+    } else {
+      $database->prepare('INSERT INTO chat_groups (name, created_by) VALUES (?, ?)')->execute([$groupName, (int) $_SESSION['user_id']]);
+      $newGroupId = (int) $database->lastInsertId();
+      $memberStatement = $database->prepare('INSERT IGNORE INTO chat_group_members (group_id, user_id) VALUES (?, ?)');
+      foreach ($memberIds as $memberId) {
+        $memberStatement->execute([$newGroupId, $memberId]);
+      }
+      logActivity($database, 'Created group', $groupName);
+      $_SESSION['admin_flash_message'] = 'Group "' . $groupName . '" created.';
+      $_POST['group_id'] = $newGroupId;
+    }
+  } elseif ($action === 'delete_group') {
+    $groupId = (int) ($_POST['group_id'] ?? 0);
+    $groupNameStatement = $database->prepare('SELECT name FROM chat_groups WHERE id = ?');
+    $groupNameStatement->execute([$groupId]);
+    $groupName = $groupNameStatement->fetchColumn();
+    if ($groupName !== false) {
+      $database->prepare('DELETE FROM chat_group_messages WHERE group_id = ?')->execute([$groupId]);
+      $database->prepare('DELETE FROM chat_group_members WHERE group_id = ?')->execute([$groupId]);
+      $database->prepare('DELETE FROM chat_groups WHERE id = ?')->execute([$groupId]);
+      logActivity($database, 'Deleted group', $groupName);
+      $_SESSION['admin_flash_message'] = 'Group deleted.';
+    }
+    unset($_POST['group_id']);
+  } elseif ($action === 'add_group_member') {
+    $groupId = (int) ($_POST['group_id'] ?? 0);
+    $userId = (int) ($_POST['user_id'] ?? 0);
+    if ($groupId && $userId) {
+      $database->prepare('INSERT IGNORE INTO chat_group_members (group_id, user_id) VALUES (?, ?)')->execute([$groupId, $userId]);
+      $_SESSION['admin_flash_message'] = 'Member added.';
+    }
+  } elseif ($action === 'remove_group_member') {
+    $groupId = (int) ($_POST['group_id'] ?? 0);
+    $userId = (int) ($_POST['user_id'] ?? 0);
+    if ($groupId && $userId) {
+      $database->prepare('DELETE FROM chat_group_members WHERE group_id = ? AND user_id = ?')->execute([$groupId, $userId]);
+      $_SESSION['admin_flash_message'] = 'Member removed.';
+    }
   }
 
-  header('Location: admin.php?panel=' . urlencode($panel));
+  $redirectUrl = 'admin.php?panel=' . urlencode($panel);
+  if (!empty($_POST['group_id'])) {
+    $redirectUrl .= '&group_id=' . (int) $_POST['group_id'];
+  }
+  header('Location: ' . $redirectUrl);
   exit;
 }
 
@@ -231,6 +278,50 @@ if ($activePanel === 'reports') {
 if ($activePanel === 'activity') {
   $activityLog = $database->query('SELECT * FROM activity_log ORDER BY id DESC LIMIT 100')->fetchAll(PDO::FETCH_ASSOC);
 }
+if ($activePanel === 'groups') {
+  $assignableUsers = $database->query("SELECT id, name, email, role FROM users WHERE role IN ('aspirant', 'client') ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+  $allGroups = $database->query("
+    SELECT chat_groups.id, chat_groups.name,
+           (SELECT COUNT(*) FROM chat_group_members WHERE group_id = chat_groups.id) AS member_count,
+           (SELECT MAX(created_at) FROM chat_group_messages WHERE group_id = chat_groups.id) AS last_message_at
+    FROM chat_groups
+    ORDER BY last_message_at IS NULL, last_message_at DESC, chat_groups.created_at DESC
+  ")->fetchAll(PDO::FETCH_ASSOC);
+
+  $selectedGroupId = isset($_GET['group_id']) ? (int) $_GET['group_id'] : 0;
+  $selectedGroup = null;
+  $selectedGroupMembers = [];
+  $nonMemberUsers = [];
+
+  if ($selectedGroupId) {
+    $selectedGroupStatement = $database->prepare('SELECT id, name FROM chat_groups WHERE id = ?');
+    $selectedGroupStatement->execute([$selectedGroupId]);
+    $selectedGroup = $selectedGroupStatement->fetch(PDO::FETCH_ASSOC) ?: null;
+  }
+
+  if ($selectedGroup) {
+    $membersStatement = $database->prepare("
+      SELECT users.id, users.name, users.email, users.role
+      FROM chat_group_members
+      JOIN users ON users.id = chat_group_members.user_id
+      WHERE chat_group_members.group_id = ?
+      ORDER BY users.name ASC
+    ");
+    $membersStatement->execute([$selectedGroupId]);
+    $selectedGroupMembers = $membersStatement->fetchAll(PDO::FETCH_ASSOC);
+
+    $memberIds = array_map(fn($m) => (int) $m['id'], $selectedGroupMembers);
+    if ($memberIds) {
+      $placeholders = implode(',', array_fill(0, count($memberIds), '?'));
+      $nonMemberStatement = $database->prepare("SELECT id, name, email, role FROM users WHERE role IN ('aspirant', 'client') AND id NOT IN ($placeholders) ORDER BY name ASC");
+      $nonMemberStatement->execute($memberIds);
+    } else {
+      $nonMemberStatement = $database->query("SELECT id, name, email, role FROM users WHERE role IN ('aspirant', 'client') ORDER BY name ASC");
+    }
+    $nonMemberUsers = $nonMemberStatement->fetchAll(PDO::FETCH_ASSOC);
+  }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -256,10 +347,12 @@ if ($activePanel === 'activity') {
       elseif ($activePanel === 'reports'): include __DIR__ . '/admin/panel-reports.php';
       elseif ($activePanel === 'activity'): include __DIR__ . '/admin/panel-activity.php';
       elseif ($activePanel === 'messages'): include __DIR__ . '/admin/panel-messages.php';
+      elseif ($activePanel === 'groups'): include __DIR__ . '/admin/panel-groups.php';
       endif; ?>
     </div>
   </div>
 </div>
 <script src="admin/chat-widget.js?v=<?php echo file_exists(__DIR__ . '/admin/chat-widget.js') ? filemtime(__DIR__ . '/admin/chat-widget.js') : time(); ?>" defer></script>
+<script src="group-chat-widget.js?v=<?php echo file_exists(__DIR__ . '/group-chat-widget.js') ? filemtime(__DIR__ . '/group-chat-widget.js') : time(); ?>" defer></script>
 </body>
 </html>

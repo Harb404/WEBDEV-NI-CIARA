@@ -1,265 +1,212 @@
 <?php
 session_start();
 require_once __DIR__ . '/database.php';
-require_once __DIR__ . '/Validation.php';
-requireAdmin();
 
-$database = getDatabase();
-$message = $_SESSION['admin_flash_message'] ?? '';
-unset($_SESSION['admin_flash_message']);
+header('Cache-Control: no-store, no-cache, must-revalidate');
+header('Pragma: no-cache');
 
-$validPanels = ['overview', 'postings', 'applications', 'users', 'organizations', 'categories', 'reports', 'activity', 'messages'];
-$activePanel = $_GET['panel'] ?? 'overview';
-if (!in_array($activePanel, $validPanels, true)) {
-  $activePanel = 'overview';
-}
-
-/**
- * Records an admin/moderation action to activity_log so it shows up on the
- * Activity tab ("Monitor platform activity").
- */
-function logActivity(PDO $database, string $action, string $details = ''): void
-{
-  $actorName = $_SESSION['user_name'] ?? 'Admin';
-  $database->prepare('INSERT INTO activity_log (actor_name, action, details) VALUES (?, ?, ?)')
-    ->execute([$actorName, $action, $details]);
-}
-
-/* ---------------- Admin actions ---------------- */
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  $action = $_POST['action'] ?? '';
-  $panel = $_POST['panel'] ?? 'overview';
-
-  if ($action === 'toggle_posting_status') {
-    $postingId = (int) ($_POST['posting_id'] ?? 0);
-    $newStatus = $_POST['new_status'] ?? 'open';
-    if (in_array($newStatus, ['open', 'closed'], true)) {
-      $postingTitle = $database->prepare('SELECT title FROM postings WHERE id = ?');
-      $postingTitle->execute([$postingId]);
-      $database->prepare('UPDATE postings SET status = ? WHERE id = ?')->execute([$newStatus, $postingId]);
-      logActivity($database, $newStatus === 'closed' ? 'Closed posting' : 'Reopened posting', $postingTitle->fetchColumn() ?: ('#' . $postingId));
-      $_SESSION['admin_flash_message'] = 'Posting status updated.';
-    }
-  } elseif ($action === 'approve_posting') {
-    $postingId = (int) ($_POST['posting_id'] ?? 0);
-    $postingTitle = $database->prepare('SELECT title FROM postings WHERE id = ?');
-    $postingTitle->execute([$postingId]);
-    $title = $postingTitle->fetchColumn();
-    if ($title !== false) {
-      $database->prepare("UPDATE postings SET moderation_status = 'approved' WHERE id = ?")->execute([$postingId]);
-      logActivity($database, 'Approved posting', $title);
-      $_SESSION['admin_flash_message'] = 'Posting approved and now visible on the site.';
-    }
-  } elseif ($action === 'reject_posting') {
-    $postingId = (int) ($_POST['posting_id'] ?? 0);
-    $postingTitle = $database->prepare('SELECT title FROM postings WHERE id = ?');
-    $postingTitle->execute([$postingId]);
-    $title = $postingTitle->fetchColumn();
-    if ($title !== false) {
-      // Rejected postings are also closed so they can never accept
-      // applications even if someone had the direct link.
-      $database->prepare("UPDATE postings SET moderation_status = 'rejected', status = 'closed' WHERE id = ?")->execute([$postingId]);
-      logActivity($database, 'Rejected posting', $title);
-      $_SESSION['admin_flash_message'] = 'Posting rejected.';
-    }
-  } elseif ($action === 'delete_posting') {
-    $postingId = (int) ($_POST['posting_id'] ?? 0);
-    $postingTitle = $database->prepare('SELECT title FROM postings WHERE id = ?');
-    $postingTitle->execute([$postingId]);
-    $title = $postingTitle->fetchColumn();
-    $database->prepare('DELETE FROM applications WHERE posting_id = ?')->execute([$postingId]);
-    $database->prepare('DELETE FROM postings WHERE id = ?')->execute([$postingId]);
-    logActivity($database, 'Removed posting', $title !== false ? $title : ('#' . $postingId));
-    $_SESSION['admin_flash_message'] = 'Posting removed.';
-  } elseif ($action === 'toggle_user_status') {
-    $targetUserId = (int) ($_POST['user_id'] ?? 0);
-    $newStatus = $_POST['new_status'] ?? 'active';
-    if (in_array($newStatus, ['active', 'banned'], true)) {
-      $targetUserName = $database->prepare("SELECT name FROM users WHERE id = ? AND role != 'admin'");
-      $targetUserName->execute([$targetUserId]);
-      $name = $targetUserName->fetchColumn();
-      if ($name !== false) {
-        $database->prepare("UPDATE users SET status = ? WHERE id = ? AND role != 'admin'")->execute([$newStatus, $targetUserId]);
-        logActivity($database, $newStatus === 'banned' ? 'Suspended account' : 'Reinstated account', $name);
-      }
-      $_SESSION['admin_flash_message'] = $newStatus === 'banned' ? 'Account suspended.' : 'Account reinstated.';
-    }
-  } elseif ($action === 'resolve_report') {
-    $reportId = (int) ($_POST['report_id'] ?? 0);
-    $reportRow = $database->prepare("SELECT target_label FROM reports WHERE id = ? AND status = 'pending'");
-    $reportRow->execute([$reportId]);
-    $label = $reportRow->fetchColumn();
-    if ($label !== false) {
-      $database->prepare("UPDATE reports SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$reportId]);
-      logActivity($database, 'Resolved report', $label);
-      $_SESSION['admin_flash_message'] = 'Report marked resolved.';
-    }
-  } elseif ($action === 'dismiss_report') {
-    $reportId = (int) ($_POST['report_id'] ?? 0);
-    $reportRow = $database->prepare("SELECT target_label FROM reports WHERE id = ? AND status = 'pending'");
-    $reportRow->execute([$reportId]);
-    $label = $reportRow->fetchColumn();
-    if ($label !== false) {
-      $database->prepare("UPDATE reports SET status = 'dismissed', resolved_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$reportId]);
-      logActivity($database, 'Dismissed report', $label);
-      $_SESSION['admin_flash_message'] = 'Report dismissed.';
-    }
-  } elseif ($action === 'add_category') {
-    $categoryName = trim($_POST['name'] ?? '');
-    $categoryDescription = trim($_POST['description'] ?? '');
-    if ($categoryName === '') {
-      $_SESSION['admin_flash_message'] = 'Please enter a category name.';
-    } else {
-      $slug = strtolower(preg_replace('/[^a-z0-9]+/i', '-', $categoryName));
-      $slug = trim($slug, '-') ?: 'category';
-      $categoryId = $slug;
-      $suffix = 2;
-      $checkStatement = $database->prepare('SELECT COUNT(*) FROM categories WHERE id = ?');
-      while (true) {
-        $checkStatement->execute([$categoryId]);
-        if (!$checkStatement->fetchColumn()) {
-          break;
-        }
-        $categoryId = $slug . '-' . $suffix;
-        $suffix++;
-      }
-      $database->prepare('INSERT INTO categories (id, name, description) VALUES (?, ?, ?)')->execute([$categoryId, $categoryName, $categoryDescription]);
-      logActivity($database, 'Added category', $categoryName);
-      $_SESSION['admin_flash_message'] = 'Category "' . $categoryName . '" added.';
-    }
-  } elseif ($action === 'update_category') {
-    $categoryId = $_POST['category_id'] ?? '';
-    $categoryName = trim($_POST['name'] ?? '');
-    $categoryDescription = trim($_POST['description'] ?? '');
-    if ($categoryId !== '' && $categoryName !== '') {
-      $database->prepare('UPDATE categories SET name = ?, description = ? WHERE id = ?')->execute([$categoryName, $categoryDescription, $categoryId]);
-      logActivity($database, 'Updated category', $categoryName);
-      $_SESSION['admin_flash_message'] = 'Category updated.';
-    }
-  } elseif ($action === 'delete_category') {
-    $categoryId = $_POST['category_id'] ?? '';
-    $inUseStatement = $database->prepare('SELECT COUNT(*) FROM postings WHERE category_id = ?');
-    $inUseStatement->execute([$categoryId]);
-    if ((int) $inUseStatement->fetchColumn() > 0) {
-      $_SESSION['admin_flash_message'] = 'That category still has postings under it — move or remove those first.';
-    } else {
-      $categoryNameStatement = $database->prepare('SELECT name FROM categories WHERE id = ?');
-      $categoryNameStatement->execute([$categoryId]);
-      $categoryName = $categoryNameStatement->fetchColumn();
-      $database->prepare('DELETE FROM categories WHERE id = ?')->execute([$categoryId]);
-      logActivity($database, 'Deleted category', $categoryName !== false ? $categoryName : $categoryId);
-      $_SESSION['admin_flash_message'] = 'Category deleted.';
-    }
-  }
-
-  header('Location: admin.php?panel=' . urlencode($panel));
+// Must be logged in at all.
+if (empty($_SESSION['user_id'])) {
+  header('Location: login.php?next=account.php');
   exit;
 }
 
-/* ---------------- Dashboard stats ---------------- */
-$statUserCount = (int) $database->query("SELECT COUNT(*) FROM users WHERE role = 'aspirant'")->fetchColumn();
-$statClientCount = (int) $database->query("SELECT COUNT(*) FROM users WHERE role = 'client'")->fetchColumn();
-$statPostingCount = (int) $database->query('SELECT COUNT(*) FROM postings')->fetchColumn();
-$statOpenPostingCount = (int) $database->query("SELECT COUNT(*) FROM postings WHERE status = 'open'")->fetchColumn();
-$statApplicationCount = (int) $database->query('SELECT COUNT(*) FROM applications')->fetchColumn();
-$statAcceptedCount = (int) $database->query("SELECT COUNT(*) FROM applications WHERE status = 'accepted'")->fetchColumn();
-$statPendingCount = (int) $database->query("SELECT COUNT(*) FROM applications WHERE status IN ('pending','reviewed')")->fetchColumn();
-$statPendingPostingCount = (int) $database->query("SELECT COUNT(*) FROM postings WHERE moderation_status = 'pending'")->fetchColumn();
-$statPendingReportCount = (int) $database->query("SELECT COUNT(*) FROM reports WHERE status = 'pending'")->fetchColumn();
-
-$monthlyApplications = array_fill(1, 12, 0);
-$monthlyStatement = $database->prepare('SELECT MONTH(created_at) AS m, COUNT(*) AS total FROM applications WHERE YEAR(created_at) = ? GROUP BY MONTH(created_at)');
-$monthlyStatement->execute([date('Y')]);
-foreach ($monthlyStatement->fetchAll(PDO::FETCH_ASSOC) as $row) {
-  $monthlyApplications[(int) $row['m']] = (int) $row['total'];
+// Admins have their own dashboard — send them there instead.
+if (!empty($_SESSION['is_admin'])) {
+  header('Location: admin.php');
+  exit;
 }
-$monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-$maxMonthlyApplications = max(1, max($monthlyApplications));
 
-$topCategories = $database->query("
-  SELECT categories.name, COUNT(applications.id) AS total
-  FROM applications
-  JOIN postings ON postings.id = applications.posting_id
-  JOIN categories ON categories.id = postings.category_id
-  GROUP BY categories.id ORDER BY total DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+$database = getDatabase();
 
-if ($activePanel === 'postings') {
-  $allPostings = $database->query("
-    SELECT postings.*, users.name AS client_name, users.org_name AS client_org, categories.name AS category_name,
+$flashMessage = $_SESSION['account_flash_message'] ?? '';
+unset($_SESSION['account_flash_message']);
+
+$userStatement = $database->prepare('SELECT id, name, email, role, status, org_name, avatar, created_at FROM users WHERE id = ? LIMIT 1');
+$userStatement->execute([$_SESSION['user_id']]);
+$user = $userStatement->fetch(PDO::FETCH_ASSOC);
+
+// If the session refers to a user that no longer exists (or was deleted),
+// clear the stale session and send them back to log in.
+if (!$user) {
+  session_unset();
+  session_destroy();
+  header('Location: login.php');
+  exit;
+}
+
+// Being banned should also boot the user out, even mid-session.
+if (($user['status'] ?? 'active') === 'banned') {
+  session_unset();
+  session_destroy();
+  header('Location: login.php');
+  exit;
+}
+
+$myPostings = [];
+$myApplications = [];
+$myGroupCount = 0;
+
+$groupCountStatement = $database->prepare('SELECT COUNT(*) FROM chat_group_members WHERE user_id = ?');
+$groupCountStatement->execute([$user['id']]);
+$myGroupCount = (int) $groupCountStatement->fetchColumn();
+
+if ($user['role'] === 'client') {
+  $myPostings = $database->prepare("
+    SELECT postings.*, categories.name AS category_name,
            (SELECT COUNT(*) FROM applications WHERE posting_id = postings.id) AS application_count
-    FROM postings JOIN users ON users.id = postings.client_id JOIN categories ON categories.id = postings.category_id
+    FROM postings
+    JOIN categories ON categories.id = postings.category_id
+    WHERE postings.client_id = ?
     ORDER BY postings.created_at DESC
-  ")->fetchAll(PDO::FETCH_ASSOC);
-}
-if ($activePanel === 'applications') {
-  $allApplications = $database->query("
-    SELECT applications.*, users.name AS aspirant_name, postings.title AS posting_title, clients.name AS client_name
+  ");
+  $myPostings->execute([$user['id']]);
+  $myPostings = $myPostings->fetchAll(PDO::FETCH_ASSOC);
+} elseif ($user['role'] === 'aspirant') {
+  $myApplications = $database->prepare("
+    SELECT applications.*, postings.title AS posting_title, clients.name AS client_name, clients.org_name AS client_org
     FROM applications
-    JOIN users ON users.id = applications.aspirant_id
     JOIN postings ON postings.id = applications.posting_id
     JOIN users AS clients ON clients.id = postings.client_id
-    ORDER BY applications.created_at DESC LIMIT 100
-  ")->fetchAll(PDO::FETCH_ASSOC);
+    WHERE applications.aspirant_id = ?
+    ORDER BY applications.created_at DESC
+  ");
+  $myApplications->execute([$user['id']]);
+  $myApplications = $myApplications->fetchAll(PDO::FETCH_ASSOC);
 }
-if ($activePanel === 'users') {
-  $allUsers = $database->query("SELECT * FROM users WHERE role = 'aspirant' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+
+$initials = '';
+foreach (preg_split('/\s+/', trim($user['name'])) as $part) {
+  if ($part !== '') {
+    $initials .= mb_strtoupper(mb_substr($part, 0, 1));
+  }
+  if (mb_strlen($initials) >= 2) {
+    break;
+  }
 }
-if ($activePanel === 'organizations') {
-  $allOrganizations = $database->query("
-    SELECT users.*,
-           (SELECT COUNT(*) FROM postings WHERE client_id = users.id) AS posting_count,
-           (SELECT COUNT(*) FROM applications JOIN postings ON postings.id = applications.posting_id WHERE postings.client_id = users.id AND applications.status = 'accepted') AS accepted_count
-    FROM users WHERE role = 'client' ORDER BY created_at DESC
-  ")->fetchAll(PDO::FETCH_ASSOC);
-}
-if ($activePanel === 'categories') {
-  $allCategories = $database->query("
-    SELECT categories.*, (SELECT COUNT(*) FROM postings WHERE category_id = categories.id) AS posting_count
-    FROM categories ORDER BY name
-  ")->fetchAll(PDO::FETCH_ASSOC);
-}
-if ($activePanel === 'reports') {
-  $allReports = $database->query("
-    SELECT reports.*, users.name AS reporter_current_name
-    FROM reports
-    LEFT JOIN users ON users.id = reports.reporter_id
-    ORDER BY (reports.status = 'pending') DESC, reports.created_at DESC
-    LIMIT 200
-  ")->fetchAll(PDO::FETCH_ASSOC);
-}
-if ($activePanel === 'activity') {
-  $activityLog = $database->query('SELECT * FROM activity_log ORDER BY id DESC LIMIT 100')->fetchAll(PDO::FETCH_ASSOC);
-}
+
+$roleBadgeClass = [
+  'aspirant' => 'profile-role-badge--aspirant',
+  'client' => 'profile-role-badge--client',
+  'admin' => 'profile-role-badge--admin',
+][$user['role']] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin Panel — ComMEETtee</title>
-<link rel="stylesheet" href="admin-style.css?v=<?php echo file_exists(__DIR__ . '/admin-style.css') ? filemtime(__DIR__ . '/admin-style.css') : time(); ?>">
+<title>My Account — ComMEETtee</title>
+<link rel="stylesheet" href="style.css?v=<?php echo file_exists(__DIR__ . '/style.css') ? filemtime(__DIR__ . '/style.css') : time(); ?>">
+<script src="script.js?v=<?php echo file_exists(__DIR__ . '/script.js') ? filemtime(__DIR__ . '/script.js') : time(); ?>" defer></script>
 </head>
-<body class="dash-body">
-<div class="dash-shell">
-<?php include __DIR__ . '/admin/sidebar.php'; ?>
-  <div class="dash-main">
-<?php include __DIR__ . '/admin/topbar.php'; ?>
-    <div class="dash-content">
-      <?php if ($message): ?><div class="dash-message"><?php echo htmlspecialchars($message); ?></div><?php endif; ?>
-      <?php if ($activePanel === 'overview'): include __DIR__ . '/admin/panel-overview.php';
-      elseif ($activePanel === 'postings'): include __DIR__ . '/admin/panel-postings.php';
-      elseif ($activePanel === 'applications'): include __DIR__ . '/admin/panel-applications.php';
-      elseif ($activePanel === 'users'): include __DIR__ . '/admin/panel-users.php';
-      elseif ($activePanel === 'organizations'): include __DIR__ . '/admin/panel-organizations.php';
-      elseif ($activePanel === 'categories'): include __DIR__ . '/admin/panel-categories.php';
-      elseif ($activePanel === 'reports'): include __DIR__ . '/admin/panel-reports.php';
-      elseif ($activePanel === 'activity'): include __DIR__ . '/admin/panel-activity.php';
-      elseif ($activePanel === 'messages'): include __DIR__ . '/admin/panel-messages.php';
-      endif; ?>
+<body>
+<main class="account-page wrap" style="padding-top: 40px; padding-bottom: 60px;">
+
+  <?php if ($flashMessage): ?>
+    <div class="dash-message" style="margin-bottom: 20px;"><?php echo htmlspecialchars($flashMessage); ?></div>
+  <?php endif; ?>
+
+  <section class="profile-card" style="max-width: 600px; margin: 0 auto 30px auto;">
+    <div class="profile-cover"></div>
+    <div class="profile-card-body" style="display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 28px 28px;">
+      
+      <form class="profile-avatar-upload" method="post" action="avatar-upload.php" enctype="multipart/form-data" style="margin-top: -46px; margin-bottom: 16px;">
+        <label class="profile-avatar-edit" title="Change profile photo" style="position: relative; display: block; width: 96px; height: 96px; border-radius: 50%; border: 4px solid var(--white); box-shadow: var(--shadow); cursor: pointer; overflow: hidden; background: var(--navy);">
+          <?php if (!empty($user['avatar']) && file_exists(__DIR__ . '/' . $user['avatar'])): ?>
+            <img src="<?php echo htmlspecialchars($user['avatar']); ?>?v=<?php echo filemtime(__DIR__ . '/' . $user['avatar']); ?>" alt="<?php echo htmlspecialchars($user['name']); ?>" class="profile-avatar-photo" style="width: 100%; height: 100%; object-fit: cover;">
+          <?php else: ?>
+            <span class="profile-avatar-placeholder profile-avatar-placeholder--large" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 32px; font-weight: 700; color: var(--white);"><?php echo htmlspecialchars($initials ?: '?'); ?></span>
+          <?php endif; ?>
+          <span class="profile-avatar-edit-icon" aria-hidden="true" style="position: absolute; bottom: 0; right: 0; background: var(--orange); color: var(--navy); width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid var(--white);">
+            <svg viewBox="0 0 24 24" fill="none" style="width: 14px; height: 14px;"><path d="M4 20h4.2L18.4 9.8a2 2 0 0 0 0-2.8l-1.4-1.4a2 2 0 0 0-2.8 0L4 15.8V20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          </span>
+          <input type="file" name="avatar" accept="image/png, image/jpeg, image/webp, image/gif" onchange="this.form.submit()" hidden>
+        </label>
+      </form>
+
+      <div class="profile-card-info" style="width: 100%; margin-bottom: 24px;">
+        <div class="profile-name-row" style="display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
+          <h1 class="display" style="font-size: 24px; margin: 0;"><?php echo htmlspecialchars($user['name']); ?></h1>
+          <span class="profile-role-badge <?php echo $roleBadgeClass; ?>" style="background: var(--gray-100); padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 700;"><?php echo htmlspecialchars(ucfirst($user['role'])); ?></span>
+        </div>
+        <p class="account-meta" style="color: var(--gray-700); font-size: 14px;">
+          <?php if (!empty($user['org_name'])): ?><?php echo htmlspecialchars($user['org_name']); ?> &middot; <?php endif; ?>
+          <?php echo htmlspecialchars($user['email']); ?>
+          &middot; Joined <?php echo htmlspecialchars(date('M Y', strtotime($user['created_at']))); ?>
+        </p>
+      </div>
+
+      <div class="profile-card-actions" style="display: flex; gap: 12px; width: 100%; justify-content: center;">
+        <a class="btn btn--outline" href="groups.php">Group Chats<?php if ($myGroupCount > 0): ?> <span class="dash-nav-badge" style="background: var(--orange); color: var(--navy); padding: 1px 6px; border-radius: 10px; font-size: 11px;"><?php echo $myGroupCount; ?></span><?php endif; ?></a>
+        <a class="btn btn--dark" href="logout.php">Log out</a>
+      </div>
     </div>
-  </div>
-</div>
-<script src="admin/chat-widget.js?v=<?php echo file_exists(__DIR__ . '/admin/chat-widget.js') ? filemtime(__DIR__ . '/admin/chat-widget.js') : time(); ?>" defer></script>
+  </section>
+
+  <?php if ($user['role'] === 'client'): ?>
+    <section class="account-section" style="max-width: 900px; margin: 0 auto;">
+      <h2 style="margin-bottom: 16px;">Your postings</h2>
+      <?php if (!$myPostings): ?>
+        <p style="color: var(--gray-700);">You haven't created any postings yet.</p>
+      <?php else: ?>
+        <div style="overflow-x: auto;">
+          <table class="account-table" style="width: 100%; border-collapse: collapse; background: var(--white); border-radius: var(--radius-sm); overflow: hidden; box-shadow: var(--shadow);">
+            <thead>
+              <tr style="background: var(--gray-100); text-align: left;">
+                <th style="padding: 12px 16px;">Title</th>
+                <th style="padding: 12px 16px;">Category</th>
+                <th style="padding: 12px 16px;">Status</th>
+                <th style="padding: 12px 16px;">Moderation</th>
+                <th style="padding: 12px 16px;">Applications</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($myPostings as $posting): ?>
+                <tr style="border-top: 1px solid var(--gray-100);">
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars($posting['title']); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars($posting['category_name']); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars(ucfirst($posting['status'])); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars(ucfirst($posting['moderation_status'] ?? 'pending')); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo (int) $posting['application_count']; ?></td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      <?php endif; ?>
+    </section>
+  <?php elseif ($user['role'] === 'aspirant'): ?>
+    <section class="account-section" style="max-width: 900px; margin: 0 auto;">
+      <h2 style="margin-bottom: 16px;">Your applications</h2>
+      <?php if (!$myApplications): ?>
+        <p style="color: var(--gray-700);">You haven't applied to anything yet.</p>
+      <?php else: ?>
+        <div style="overflow-x: auto;">
+          <table class="account-table" style="width: 100%; border-collapse: collapse; background: var(--white); border-radius: var(--radius-sm); overflow: hidden; box-shadow: var(--shadow);">
+            <thead>
+              <tr style="background: var(--gray-100); text-align: left;">
+                <th style="padding: 12px 16px;">Posting</th>
+                <th style="padding: 12px 16px;">Client</th>
+                <th style="padding: 12px 16px;">Status</th>
+                <th style="padding: 12px 16px;">Applied</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($myApplications as $application): ?>
+                <tr style="border-top: 1px solid var(--gray-100);">
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars($application['posting_title']); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars($application['client_org'] ?: $application['client_name']); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars(ucfirst($application['status'])); ?></td>
+                  <td style="padding: 12px 16px;"><?php echo htmlspecialchars($application['created_at']); ?></td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      <?php endif; ?>
+    </section>
+  <?php endif; ?>
+</main>
 </body>
 </html>

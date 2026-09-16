@@ -39,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $user = $statement->fetch(PDO::FETCH_ASSOC);
 
   if ($user && password_verify($password, $user['password']) && ($user['status'] ?? 'active') !== 'banned') {
+    session_regenerate_id(true);
     $_SESSION['user_id'] = (int) $user['id'];
     $_SESSION['user_name'] = $user['name'];
     $_SESSION['role'] = $user['role'];

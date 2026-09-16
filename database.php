@@ -200,5 +200,38 @@ function getDatabase(): PDO
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB");
 
+  /* ---------------- group chat ----------------
+     Admin creates a named group and adds any registered user (aspirant,
+     client, or admin) to it; members see and post in the group from their
+     own account (groups.php), admin manages it from the Groups panel. */
+  $database->exec("CREATE TABLE IF NOT EXISTS chat_groups (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_by INT UNSIGNED NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  ) ENGINE=InnoDB");
+
+  $database->exec("CREATE TABLE IF NOT EXISTS chat_group_members (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    group_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    last_read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_group_member (group_id, user_id),
+    FOREIGN KEY (group_id) REFERENCES chat_groups(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  ) ENGINE=InnoDB");
+
+  $database->exec("CREATE TABLE IF NOT EXISTS chat_group_messages (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    group_id INT UNSIGNED NOT NULL,
+    sender_id INT UNSIGNED NOT NULL,
+    message VARCHAR(2000) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES chat_groups(id),
+    FOREIGN KEY (sender_id) REFERENCES users(id)
+  ) ENGINE=InnoDB");
+
   return $database;
 }
