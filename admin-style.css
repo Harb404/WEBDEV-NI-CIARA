@@ -23,6 +23,11 @@
     padding: 0;
 }
 
+a {
+    text-decoration: none;
+    color: inherit;
+}
+
 body.dash-body {
     font-family: var(--font);
     background: var(--bg);
@@ -466,4 +471,126 @@ body.dash-body {
         grid-template-columns: 1fr;
         height: auto;
     }
+}
+
+
+/* ---- New admin sections: sidebar badge, forms, and row-based lists ---- */
+
+.dash-nav-badge {
+    background: var(--white);
+    color: var(--navy);
+    font-size: 11px;
+    font-weight: 800;
+    padding: 1px 7px;
+    border-radius: 999px;
+    margin-left: 6px;
+}
+
+.dash-form {
+    display: grid;
+    gap: 14px;
+}
+
+.dash-form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+}
+
+.dash-form label {
+    display: grid;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+.dash-form input {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    padding: 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font);
+}
+
+.dash-btn-primary {
+    justify-self: start;
+    border: none;
+    background: var(--navy);
+    color: var(--white);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 700;
+}
+
+.dash-btn-primary:hover {
+    background: var(--navy-soft);
+}
+
+.dash-row-list {
+    display: grid;
+    gap: 10px;
+}
+
+.dash-row-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.dash-row-item--stack {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.dash-row-meta {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.dash-inline-edit-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.dash-inline-edit-form input {
+    font-size: 13.5px;
+    padding: 8px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font);
+}
+
+.dash-inline-edit-form input[name="name"] {
+    font-weight: 700;
+    min-width: 140px;
+}
+
+.dash-inline-edit-form input[name="description"] {
+    flex: 1;
+    min-width: 180px;
+}
+
+.dash-report-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.dash-report-reason {
+    font-size: 13.5px;
+    color: var(--text);
 }

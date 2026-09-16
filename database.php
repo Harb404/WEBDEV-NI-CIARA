@@ -92,6 +92,18 @@ function getDatabase(): PDO
     FOREIGN KEY (category_id) REFERENCES categories(id)
   ) ENGINE=InnoDB");
 
+  // Admin moderation: new postings need approval before they're visible on
+  // the public site. Existing postings are backfilled as 'approved' so
+  // nothing that was already live suddenly disappears when this ships.
+  $hasModerationStatus = (int) $database->query("
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'postings' AND column_name = 'moderation_status'
+  ")->fetchColumn();
+  if (!$hasModerationStatus) {
+    $database->exec("ALTER TABLE postings ADD COLUMN moderation_status VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER status");
+    $database->exec("UPDATE postings SET moderation_status = 'approved'");
+  }
+
   /* ---------------- applications ----------------
      status: pending | reviewed | accepted | declined | withdrawn */
   $database->exec("CREATE TABLE IF NOT EXISTS applications (
@@ -156,6 +168,36 @@ function getDatabase(): PDO
     read_by_client TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (thread_id) REFERENCES chat_threads(id)
+  ) ENGINE=InnoDB");
+
+  /* ---------------- reports ----------------
+     A user reporting a posting or an account as inappropriate. target_id
+     points at postings.id or users.id depending on target_type; the label
+     is a snapshot so the report still reads clearly even if the reported
+     posting/account is later deleted. */
+  $database->exec("CREATE TABLE IF NOT EXISTS reports (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    reporter_id INT UNSIGNED NULL,
+    reporter_name VARCHAR(255) NOT NULL DEFAULT 'Guest',
+    target_type VARCHAR(20) NOT NULL,
+    target_id INT UNSIGNED NOT NULL,
+    target_label VARCHAR(255) NOT NULL DEFAULT '',
+    reason VARCHAR(1000) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME NULL DEFAULT NULL,
+    FOREIGN KEY (reporter_id) REFERENCES users(id)
+  ) ENGINE=InnoDB");
+
+  /* ---------------- activity_log ----------------
+     A simple audit trail of moderation and admin actions, shown on the
+     Activity tab so the admin can monitor what's happened on the platform. */
+  $database->exec("CREATE TABLE IF NOT EXISTS activity_log (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    actor_name VARCHAR(255) NOT NULL DEFAULT 'System',
+    action VARCHAR(255) NOT NULL,
+    details VARCHAR(500) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB");
 
   return $database;

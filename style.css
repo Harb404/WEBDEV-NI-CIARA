@@ -161,6 +161,37 @@ h4 {
 
 .has-dropdown {
     position: relative;
+    display: flex;
+    align-items: center;
+    border-radius: 999px;
+    transition: background 0.15s ease;
+}
+
+.has-dropdown:hover {
+    background: var(--gray-100);
+}
+
+.has-dropdown .nav-pill-label {
+    padding-right: 6px;
+}
+
+.has-dropdown:hover .nav-pill-label {
+    background: none;
+    color: var(--orange-dark);
+}
+
+.dropdown-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 14px 10px 4px;
+    border: none;
+    background: none;
+    color: var(--navy);
+    cursor: pointer;
+}
+
+.has-dropdown:hover .dropdown-toggle {
+    color: var(--orange-dark);
 }
 
 .chev {
@@ -467,6 +498,7 @@ h4 {
     font-size: clamp(30px, 5vw, 52px);
     font-weight: 800;
     margin-bottom: 18px;
+    color: var(--white);
 }
 
 .spotlight-caption {
@@ -547,9 +579,17 @@ h4 {
     transition: transform 0.2s ease;
 }
 
-.category-card:nth-child(1) { --tilt: -2deg; }
-.category-card:nth-child(2) { --tilt: 0deg; }
-.category-card:nth-child(3) { --tilt: 2deg; }
+.category-card:nth-child(1) {
+    --tilt: -2deg;
+}
+
+.category-card:nth-child(2) {
+    --tilt: 0deg;
+}
+
+.category-card:nth-child(3) {
+    --tilt: 2deg;
+}
 
 .category-card:hover {
     transform: rotate(0deg) translateY(-4px);
@@ -605,9 +645,7 @@ h4 {
     right: 0;
     bottom: -14px;
     height: 14px;
-    background:
-        linear-gradient(135deg, var(--orange) 50%, transparent 50%) 0 0 / 28px 28px repeat-x,
-        linear-gradient(45deg, var(--orange) 50%, transparent 50%) 14px 0 / 28px 28px repeat-x;
+    background: linear-gradient(135deg, var(--orange) 50%, transparent 50%) 0 0 / 28px 28px repeat-x, linear-gradient(45deg, var(--orange) 50%, transparent 50%) 14px 0 / 28px 28px repeat-x;
 }
 
 .thin-square {
@@ -667,6 +705,7 @@ h4 {
     padding: 8px 18px;
     border-radius: 999px;
     background: var(--white);
+    color: var(--navy);
     font-weight: 700;
     font-size: 13px;
     box-shadow: 0 2px 8px rgba(33, 29, 84, 0.08);
@@ -699,6 +738,13 @@ h4 {
     gap: 18px;
     max-width: 900px;
     margin: 0 auto;
+    cursor: grab;
+    touch-action: pan-y;
+    user-select: none;
+}
+
+.carousel:active {
+    cursor: grabbing;
 }
 
 .carousel-arrow {
@@ -726,6 +772,11 @@ h4 {
     gap: 16px;
     flex: 1;
     justify-content: center;
+    transition: transform 0.15s ease;
+}
+
+.carousel-track.is-dragging {
+    transition: none;
 }
 
 .carousel-slide {
@@ -1050,6 +1101,11 @@ h4 {
     border-radius: 999px;
 }
 
+.profile-badge--small {
+    font-size: 11px;
+    padding: 2px 8px;
+}
+
 .profile-stars {
     height: 14px;
     width: 90px;
@@ -1160,6 +1216,53 @@ h4 {
 
 .testimonials-tagline span {
     color: var(--orange);
+}
+
+
+/* ============ ABOUT US ============ */
+
+.about-section {
+    padding: 80px 24px;
+}
+
+.about-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+}
+
+.about-copy p {
+    margin-top: 16px;
+    color: var(--text-muted, #6b688a);
+    line-height: 1.7;
+}
+
+.about-pillars {
+    display: grid;
+    gap: 20px;
+}
+
+.about-pillar {
+    background: var(--gray-100);
+    border-radius: var(--radius-sm, 12px);
+    padding: 24px;
+}
+
+.about-pillar h3 {
+    color: var(--navy);
+    margin-bottom: 8px;
+}
+
+.about-pillar p {
+    color: var(--text-muted, #6b688a);
+    line-height: 1.6;
+}
+
+@media (max-width: 860px) {
+    .about-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 
