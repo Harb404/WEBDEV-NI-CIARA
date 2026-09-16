@@ -53,7 +53,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       header('Location: ' . ($nextUrl ?: 'account.php'));
       exit;
     } catch (PDOException $exception) {
-      $error = 'That email is already registered.';
+      if ($exception->getCode() === '23000') {
+        // Integrity constraint violation — the unique index on `email` fired.
+        $error = 'That email is already registered.';
+      } else {
+        // Anything else (missing column, connection drop, etc.) is a real
+        // bug, not a duplicate email — surface it instead of hiding it.
+        error_log('Registration failed: ' . $exception->getMessage());
+        $error = 'Something went wrong while creating your account. Please try again in a moment.';
+      }
     }
   }
 }
